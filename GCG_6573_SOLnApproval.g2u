@@ -1,0 +1,734 @@
+﻿Program.Sub.Preflight.Start
+V.Global.sOrderNo.Declare(String)
+V.Global.sShipTo.Declare(String, "N")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Project: 6573: Plugin for ARC 5108 SO Line Approval Modifications 
+'Author: Brandon Medina 
+'Customer: Safety Technology International Inc 
+'Quote: 13218-0
+'Description: Edits 6093, which is based on 5108. Adds On hold checkbox on order entry screen, new behavior to unapproving sales order to put work orders on hold as well
+'Adds approved and on hold checkbox, as well as column that takes user field 1 text as its caption and data from company options (std) > View > Open Sales Order Review Dashboard 
+
+F.Intrinsic.Control.Try
+	
+	V.Local.sError.Declare(String,"")
+	V.Local.sHook.Declare(String,"")
+	V.Local.sOrdNum.Declare(String)
+	
+	F.ODBC.Connection!con.OpenCompanyConnection
+	
+	V.Local.sHook.Set(V.Caller.Hook)
+	
+	F.Intrinsic.Control.SelectCase(V.Local.sHook)
+		'Hook 11560 is the entry hook for Order Header
+		F.Intrinsic.Control.Case("11560")
+			V.Local.sOrdNum.Set(V.Passed.000003)
+			V.Global.sOrderNo.Set(V.Local.sOrdNum)
+			
+			v.Passed.000104.Set("IncoTerms") 		'FOB label
+			v.Passed.000102.Set("Freight Terms")	'Freight Zone label
+			v.Passed.000117.Set("GS Quote #")		'Sort 1 label
+			v.Passed.000116.Set("Quote Log #")		'Sort 2 label
+			v.passed.000203.Set("WF View")
+			
+			'Set Label on Script 2 Button
+			V.Passed.000202.Set("Notes")
+			'LBL-GAB-1
+			'FOR LABEL
+			'Set horizontal position
+			'Original was horz 85 x 17 & 65 X 17
+			f.Intrinsic.Variable.SetProperty("GAB-LBL-1","PL",85)
+			'Set vertical position
+			F.Intrinsic.Variable.SetProperty("GAB-LBL-1","PT",17)
+			'BM Set Width to prevent on hold box next to it from disappearing
+			F.Intrinsic.Variable.SetProperty("GAB-LBL-1", "PW", 50)
+			f.Intrinsic.UI.ChangeCallerProperty(v.Passed.GAB-LBL-1,"HIDE",0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			V.Passed.GAB-LBL-1.Set("Approved")
+			
+			'GAB-CHK-1
+			'FOR CHECK BOX
+			'Set horizontal position
+			f.Intrinsic.Variable.SetProperty("GAB-CHK-1","PL", 65)
+			'Set vertical position
+			F.Intrinsic.Variable.SetProperty("GAB-CHK-1","PT",17)
+			f.Intrinsic.UI.ChangeCallerProperty(v.Passed.GAB-CHK-1,"HIDE",0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+			
+			'BM Set to unchecked by default 
+			V.Passed.GAB-CHK-1.Set("N")
+			
+			'BM For ON HOLD LABEL 
+				'Set Horz Position 
+			F.Intrinsic.Variable.SetProperty("GAB-LBL-2", "PL", 165)
+				'Set Vert Position 
+			F.Intrinsic.Variable.SetProperty("GAB-LBL-2", "PT", 17)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2, "HIDE", 0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2, "LOCK", 0)
+			V.Passed.GAB-LBL-2.Set("On Hold")
+			
+			'BM For ON HOLD CHECK BOX 
+				'Set Horz Position
+			F.Intrinsic.Variable.SetProperty("GAB-CHK-2", "PL", 145)
+				'Set Vert Position
+			F.Intrinsic.Variable.SetProperty("GAB-CHK-2", "PT", 17)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2, "HIDE", 0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2, "LOCK", 0)
+			
+			'BM 
+			V.Passed.GAB-CHK-2.Set("N")
+			
+			F.Intrinsic.Control.If(V.Local.sOrdNum.Trim,<>,"")
+				F.Intrinsic.Control.CallSub(DshbrdOpen)
+				F.Intrinsic.Control.ExitSub
+			F.Intrinsic.Control.Else
+				F.Intrinsic.Control.ExitSub
+			F.Intrinsic.Control.EndIf
+		'HOOK 11565 Loads the order information
+		F.Intrinsic.Control.Case("11565")			
+			F.Intrinsic.Control.CallSub(LoadOrderApproval)
+		'Hook for when Ship to ID is changed
+		F.Intrinsic.Control.Case("11570")
+			V.Global.sShipTo.Set("Y")
+			F.Intrinsic.Control.CallSub(LoadOrderApproval)
+		'Hook 11870 is the pre save hook on header screen
+		F.Intrinsic.Control.Case("11870")
+			F.Intrinsic.Control.CallSub(SaveEntry)
+		'Hook 12010 is the Populate hook for Order Lines
+		F.Intrinsic.Control.Case("12010")
+			v.passed.000141.Set("WF View")
+			F.Intrinsic.Control.CallSub(populate)
+		'Hook 12705 is the Line Change Hook
+		F.Intrinsic.Control.Case("12705")
+			F.Intrinsic.Control.CallSub(entrycheck)
+		'BM: Hook 11945 GAB CHK 1 Change Hook 
+		F.Intrinsic.Control.Case("11945")
+			F.Intrinsic.Control.CallSub(SetOnHoldViaApproved)
+		'BM: Hook 11946 GAB CHK 2 Change Hook 
+		F.Intrinsic.Control.Case("11946")
+		'Toggle approval checkbox after writing to tables 
+			F.Intrinsic.Control.CallSub(Chk2Toggle)
+			F.Intrinsic.Control.CallSub(SetOnHoldViaApproved)
+			
+	F.Intrinsic.Control.EndSelect
+	F.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.DshbrdOpen.Start
+F.Intrinsic.Control.Try
+V.Local.bApprover.Declare(Boolean)
+V.Local.sOrdNum.Declare(String)
+V.Local.sSQL.Declare(String)
+
+V.Local.sOrdNum.Set(V.Global.sOrderNo)
+F.Global.Security.IsInGroup(V.Caller.User, "SOAPP", V.Caller.CompanyCode, V.Local.bApprover)
+
+F.Intrinsic.String.LPad(V.Local.sOrdNum,0,7,V.Local.sOrdNum)
+	'F.Intrinsic.String.Build("SELECT TOP 1 APPROVAL_FLAG FROM GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' ORDER BY ORDER_LINE", V.Local.sOrdNum,V.Local.sSQL)
+	F.Intrinsic.String.Build("SELECT TOP 1 APPROVAL_FLAG, ON_HOLD_FLAG FROM GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' ORDER BY ORDER_LINE", V.Local.sOrdNum,V.Local.sSQL)
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rstCheck", V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.con!rstCheck.EOF, =, False)
+		F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!APPROVAL_FLAG, =, True)
+			V.Passed.GAB-CHK-1.Set("Y")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				'BM Change to unlocked if they are approver 
+'				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+'				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+			'F.ODBC.con!rstCheck.Close
+		F.Intrinsic.Control.Else
+			V.Passed.GAB-CHK-1.Set("N")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+		
+		'BM: Add similar logic for On Hold 
+		F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!ON_HOLD_FLAG, =, True)
+			V.Passed.GAB-CHK-2.Set("Y")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+			'F.ODBC.con!rstCheck.Close
+		F.Intrinsic.Control.Else
+			V.Passed.GAB-CHK-2.Set("N")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+		
+		'F.ODBC.con!rstCheck.Close
+	F.Intrinsic.Control.Else
+		V.Passed.GAB-CHK-1.Set("N")
+		'BM: 
+		V.Passed.GAB-CHK-2.Set("N")
+		F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			'BM
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",0)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			'BM
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+		F.Intrinsic.Control.EndIf
+		'F.ODBC.con!rstCheck.Close
+	F.Intrinsic.Control.EndIf
+	F.ODBC.con!rstCheck.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.DshbrdOpen.End
+
+Program.Sub.LoadOrderApproval.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String,"")
+V.Local.bApprover.Declare(Boolean)
+V.Local.sCust.Declare(String)
+V.Local.sOrderNo.Declare(String)
+V.Local.sSQL.Declare(String)
+
+F.Global.Security.IsInGroup(V.Caller.User, "SOAPP", V.Caller.CompanyCode, V.Local.bApprover)
+
+V.Local.sOrderNo.Set(V.Passed.000003)
+F.Intrinsic.String.LPad(V.Local.sOrderNo,0,7,V.Local.sOrderNo)
+'Function.Intrinsic.Debug.InvokeDebugger
+'Function.Intrinsic.Debug.Stop
+
+'F.Intrinsic.String.Build("SELECT TOP 1 APPROVAL_FLAG FROM GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' ORDER BY ORDER_LINE DESC", V.Local.sOrderNo,V.Local.sSQL)
+'BM 
+F.Intrinsic.String.Build("SELECT TOP 1 APPROVAL_FLAG, ON_HOLD_FLAG FROM GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' ORDER BY ORDER_LINE DESC", V.Local.sOrderNo,V.Local.sSQL)
+F.ODBC.Connection!con.OpenLocalRecordsetRO("rstCheck", V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.con!rstCheck.EOF, =, False)
+		F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!APPROVAL_FLAG, =, True)
+			V.Passed.GAB-CHK-1.Set("Y")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				'BM: Doesnt make sense to disable the approve label and checkbox if they are approvers 
+'				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+'				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+			'F.ODBC.con!rstCheck.Close
+		F.Intrinsic.Control.Else
+			V.Passed.GAB-CHK-1.Set("N")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+		'BM: Add similar logic for On Hold 
+		F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!ON_HOLD_FLAG, =, True)
+			V.Passed.GAB-CHK-2.Set("Y")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+			'F.ODBC.con!rstCheck.Close
+		F.Intrinsic.Control.Else
+			V.Passed.GAB-CHK-2.Set("N")
+			F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",0)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",0)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+				F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		V.Passed.GAB-CHK-1.Set("N")
+		'BM: 
+		V.Passed.GAB-CHK-2.Set("N")
+		F.Intrinsic.Control.If(V.Local.bApprover,=,True)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+			'BM
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",0)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",0)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			'BM
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+		F.Intrinsic.Control.EndIf
+		'F.ODBC.con!rstCheck.Close
+	F.Intrinsic.Control.EndIf
+F.ODBC.con!rstCheck.Close	
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadOrderApproval.End
+
+Program.Sub.unload.Start
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare(String,"")
+	
+	F.ODBC.Connection!con.Close
+	F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.unload.End
+
+Program.Sub.Populate.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String,"")
+'V.Local.bApprover.Declare(Boolean)
+V.Local.sOrdNumb.Declare(String)
+V.Local.sLine.Declare(String)
+V.Local.sSql.Declare(String)
+
+'BM Disable approved button regardless at line level
+'F.Global.Security.IsInGroup(V.Caller.User, "SOAPP", V.Caller.CompanyCode, V.Local.bApprover)
+'This subroutine makes the custom checkbox and label visible to the user
+	
+'FOR LABEL
+'Set horizontal position
+f.Intrinsic.Variable.SetProperty("GAB-LBL-1","PL",384)
+'Set vertical position
+F.Intrinsic.Variable.SetProperty("GAB-LBL-1","PT",8)
+f.Intrinsic.UI.ChangeCallerProperty(v.Passed.GAB-LBL-1,"HIDE",0)
+F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",0)
+V.Passed.GAB-LBL-1.Set("Approved")
+	
+'FOR TEXT BOX
+'Set horizontal position
+f.Intrinsic.Variable.SetProperty("GAB-CHK-1","PL",364)
+'Set vertical position
+F.Intrinsic.Variable.SetProperty("GAB-CHK-1","PT",8)
+f.Intrinsic.UI.ChangeCallerProperty(v.Passed.GAB-CHK-1,"HIDE",0)
+F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+	
+	
+'FOR ON HOLD TEXT BOX 
+	'BM For ON HOLD LABEL 
+		'Set Horz Position 
+	F.Intrinsic.Variable.SetProperty("GAB-LBL-2", "PL", 464)
+		'Set Vert Position 
+	F.Intrinsic.Variable.SetProperty("GAB-LBL-2", "PT", 8)
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2, "HIDE", 0)
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2, "LOCK", 1)
+	V.Passed.GAB-LBL-2.Set("On Hold")
+	
+	'BM: For ON HOLD CHK BOX
+		'Set Horz Position
+	F.Intrinsic.Variable.SetProperty("GAB-CHK-2", "PL", 444)
+		'Set Vert Position
+	F.Intrinsic.Variable.SetProperty("GAB-CHK-2", "PT", 8)
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2, "HIDE", 0)
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2, "LOCK", 1)
+
+'This subroutine will set the custom checkbox and Lock/unlock the Gen Wo button according to the data saved in the table
+	
+F.Intrinsic.String.LPad(V.Passed.000060, "0", 7, V.Local.sOrdNumb)
+F.Intrinsic.String.RPad(V.Passed.000051, "0", 2, V.Local.sLine)
+F.Intrinsic.String.LPad(V.Local.sLine, "0", 4, V.Local.sLine)
+	
+'F.Intrinsic.String.Build("Select APPROVAL_FLAG from GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' and ORDER_LINE = '{1}' ", V.Local.sOrdNumb, V.Local.sLine, V.Local.sSql)
+F.Intrinsic.String.Build("Select APPROVAL_FLAG, ON_HOLD_FLAG from GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' and ORDER_LINE = '{1}' ", V.Local.sOrdNumb, V.Local.sLine, V.Local.sSql)
+F.ODBC.Connection!con.OpenLocalRecordsetRO("rstCheck", V.Local.sSql)
+F.Intrinsic.Control.If(V.ODBC.con!rstCheck.EOF, =, False)
+	F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!APPROVAL_FLAG, =, True)
+'		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+'		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000061, "LOCK", 0)
+		V.Passed.GAB-CHK-1.Set("Y")
+		'F.ODBC.con!rstCheck.Close
+		'F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+	'BM
+	F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!ON_HOLD_FLAG, =, True)
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000061, "LOCK", 1)
+		V.Passed.GAB-CHK-2.Set("Y")
+	F.Intrinsic.Control.EndIf
+	
+	'F.ODBC.con!rstCheck.Close
+	
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000061, "LOCK", 1)
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+	V.Passed.GAB-CHK-1.Set("N")
+	'BM: 
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2, "LOCK", 1)
+	V.Passed.GAB-CHK-2.Set("N")
+	
+	'F.ODBC.con!rstCheck.Close
+F.Intrinsic.Control.EndIf
+F.ODBC.con!rstCheck.Close
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.Populate.End
+
+Program.Sub.EntryCheck.Start
+F.Intrinsic.Control.Try
+	V.Local.bApprover.Declare(Boolean)
+	V.Local.sError.Declare(String)
+	V.Local.sOrdNumb.Declare(String)
+	V.Local.sLine.Declare(String)
+	V.Local.sSql.Declare(String)
+	
+	F.Global.Security.IsInGroup(V.Caller.User, "SOAPP", V.Caller.CompanyCode, V.Local.bApprover)
+	'This subroutine will set the custom checkbox and Lock/unlock the Gen Wo button according to the data saved in the table
+	
+	F.Intrinsic.String.LPad(V.Passed.000060, "0", 7, V.Local.sOrdNumb)
+	F.Intrinsic.String.RPad(V.Passed.000051, "0", 2, V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine, "0", 4, V.Local.sLine)
+	
+'	Function.Intrinsic.Debug.InvokeDebugger
+'	Function.Intrinsic.Debug.Stop
+	
+	'F.Intrinsic.String.Build("Select APPROVAL_FLAG from GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' and ORDER_LINE = '{1}' ", V.Local.sOrdNumb, V.Local.sLine, V.Local.sSql)
+	'BM Add stuff for On hold 
+	F.Intrinsic.String.Build("Select APPROVAL_FLAG, ON_HOLD_FLAG from GCG_6573_SO_LINE_APP where ORDER_NO = '{0}' and ORDER_LINE = '{1}' ", V.Local.sOrdNumb, V.Local.sLine, V.Local.sSql)
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rstCheck", V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.con!rstCheck.EOF, =, False)
+		F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!APPROVAL_FLAG, =, True)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000061, "LOCK", 0)
+			V.Passed.GAB-CHK-1.Set("Y")
+'			F.ODBC.con!rstCheck.Close
+			'F.Intrinsic.Control.ExitSub
+		F.Intrinsic.Control.EndIf
+		'BM Same logic for On hold 
+		F.Intrinsic.Control.If(V.ODBC.con!rstCheck.FieldValTrim!ON_HOLD_FLAG, =, True)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+			F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000061, "LOCK", 1)
+			V.Passed.GAB-CHK-2.Set("Y")
+'			F.ODBC.con!rstCheck.Close
+			'F.Intrinsic.Control.ExitSub
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-1,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-1,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-CHK-2,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.GAB-LBL-2,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000061, "LOCK", 1)
+		V.Passed.GAB-CHK-1.Set("N")
+		V.Passed.GAB-CHK-2.Set("N")
+	
+'		F.ODBC.con!rstCheck.Close
+	F.Intrinsic.Control.EndIf
+	
+	F.ODBC.con!rstCheck.Close
+	F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.EntryCheck.End
+
+Program.Sub.SaveEntry.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+V.Local.bPrevFlag.Declare(Boolean)
+V.Local.iCnt.Declare(Long)
+V.Local.sOrdNumb.Declare(String)
+V.Local.sLine.Declare(String)
+V.Local.sLoc.Declare(String)
+V.Local.sSql.Declare(String)
+V.Local.sPrevFlag.Declare(String)
+V.Local.sFlag.Declare(String)
+V.Local.sWFTitle.Declare(String)
+V.Local.sRet.Declare(String)
+V.Local.sStatus.Declare(String)
+V.Local.sWFId.Declare(String)
+V.Local.sSelect.Declare(String)
+V.Local.sHoldFlag.Declare
+V.Local.bPrevHoldFlag.Declare
+
+
+'This subroutine will either update the APPROVAL_FLAG in an existing entry or create a new entry in the SO_LINE_APPROVAL table in the post save hook
+'BM: Will also do the same for the ON_HOLD_FLAG 
+
+F.Intrinsic.String.LPad(V.Passed.000003, "0", 7, V.Local.sOrdNumb)	
+V.Local.sLoc.Set(V.Passed.000065)
+
+'Cancel core execution and warn user that an order can't be approved and on hold
+F.Intrinsic.Control.If(V.Passed.GAB-CHK-1.Trim, =, "Y", AND, V.Passed.GAB-CHK-2.Trim, =, "Y")
+	V.Passed.777777.Set(1, 11870)
+	F.Intrinsic.UI.Msgbox("Order not saved. Order cannot be marked as approved and on hold. Uncheck one of these and try again.", "Sales Order Header Not Saved")
+	F.Intrinsic.Control.End
+'Cancel Core execution and tell user to mark as approved or on hold 
+F.Intrinsic.Control.ElseIf(V.Passed.GAB-CHK-1.Trim, =, "N", AND, V.Passed.GAB-CHK2.Trim, =, "N")
+	F.Intrinsic.UI.Msgbox("Order will be marked on hold.")
+	V.Passed.GAB-CHK-2.Set("Y")
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Passed.GAB-CHK-1.Trim, =, "Y")
+	V.Local.sFlag.Set("1")
+F.Intrinsic.Control.Else
+	V.Local.sFlag.Set("0")
+F.Intrinsic.Control.EndIf
+
+'BM
+F.Intrinsic.Control.If(V.Passed.GAB-CHK-2.Trim, =, "Y")
+	V.Local.sHoldFlag.Set("1")
+F.Intrinsic.Control.Else
+	V.Local.sHoldFlag.Set("0")
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.DataTable.dtOrderLines.Exists)
+	F.Data.DataTable.Close("dtOrderLines")
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.String.Build("SELECT ORDER_NO, RECORD_NO FROM V_ORDER_LINES WHERE ORDER_NO = '{0}'", V.Local.sOrdNumb, V.Local.sSql)
+	F.Data.DataTable.CreateFromSQL("dtOrderLines", "con", V.Local.sSql, True)
+F.Intrinsic.Control.If(V.DataTable.dtOrderLines.RowCount--,=,-1)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtOrderLines.RowCount--,1)
+	V.Local.sOrdNumb.Set(V.DataTable.dtOrderLines(V.Local.iCnt).ORDER_NO!FieldVal)
+	V.Local.sLine.Set(V.DataTable.dtOrderLines(V.Local.iCnt).RECORD_NO!FieldVal)
+	F.Intrinsic.String.Build("Select * from SO_LINE_APPROVAL where ORDER_NO = '{0}' and LINE = '{1}' ", V.Local.sOrdNumb, V.Local.sLine, V.Local.sSql)
+	F.ODBC.Connection!con.OpenLocalRecordsetRW("rstCheck", V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.con!rstCheck.EOF, =, False)
+		F.ODBC.con!rstCheck.Set!APPROVAL_FLAG(V.Local.sFlag)
+		F.ODBC.con!rstCheck.Set!FILLER("")
+		F.ODBC.con!rstCheck.Update
+	F.Intrinsic.Control.Else
+		F.ODBC.con!rstCheck.AddNew
+		F.ODBC.con!rstCheck.Set!ORDER_NO(V.Local.sOrdNumb)
+		F.ODBC.con!rstCheck.Set!LINE(V.Local.sLine)
+		F.ODBC.con!rstCheck.Set!APPROVAL_FLAG(V.Local.sFlag)
+		F.ODBC.con!rstCheck.Set!FILLER("")
+		F.ODBC.con!rstCheck.Update	
+	F.Intrinsic.Control.EndIf
+	F.ODBC.con!rstCheck.Close
+	'Add logic to save the date approved to a new custom table 
+	'BM Use this to write/update on hold status 
+	F.Intrinsic.String.Build("SELECT * FROM GCG_6573_SO_LINE_APP WHERE ORDER_NO = '{0}' AND ORDER_LINE ='{1}'", V.Local.sOrdNumb, V.Local.sLine, V.Local.sSql)
+	F.ODBC.Connection!con.OpenLocalRecordsetRW("rstAPPDate", V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.con!rstAPPDate.EOF,=,False)
+		V.Local.bPrevFlag.Set(V.ODBC.con!rstAPPDate.FieldVal!APPROVAL_FLAG)
+		F.ODBC.con!rstAPPDate.Set!APPROVAL_FLAG(V.Local.sFlag)
+		F.Intrinsic.Control.If(V.Local.bPrevFlag,=,False, "AND", V.Local.sFlag, =, 1)
+			F.ODBC.con!rstAPPDate.Set!APPROVAL_DATE(V.Ambient.Date.FormatYYYY-MM-DD)
+		F.Intrinsic.Control.EndIf
+		'BM
+		V.Local.bPrevHoldFlag.Set(V.ODBC.con!rstAPPDate.FieldVal!ON_HOLD_FLAG)
+		'F.Intrinsic.Control.If(V.Local.bPrevHoldFlag, =, False, AND, V.Local.sHoldFlag, =, 1)
+			F.ODBC.con!rstAPPDate.Set!ON_HOLD_FLAG(V.Local.sHoldFlag)
+		'F.Intrinsic.Control.EndIf
+		
+		F.ODBC.con!rstAPPDate.Update	
+	F.Intrinsic.Control.Else
+		F.ODBC.con!rstAPPDate.AddNew
+		F.ODBC.con!rstAPPDate.Set!ORDER_NO(V.Local.sOrdNumb)
+		F.ODBC.con!rstAPPDate.Set!ORDER_LINE(V.Local.sLine)
+		F.ODBC.con!rstAPPDate.Set!APPROVAL_FLAG(V.Local.sFlag)
+		'BM adding on hold flag to new record
+		F.ODBC.con!rstAPPDate.Set!ON_HOLD_FLAG(V.Local.sHoldFlag)
+		
+		F.Intrinsic.Control.If(v.Local.sFlag,=,1)
+			F.ODBC.con!rstAPPDate.Set!APPROVAL_DATE(V.Ambient.Date.FormatYYYY-MM-DD)
+		F.Intrinsic.Control.EndIf
+		F.ODBC.con!rstAPPDate.Update	
+	F.Intrinsic.Control.EndIf
+	F.ODBC.con!rstAPPDate.Close
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+'BM Add in on hold check box to this reset checkbox logic 
+F.Intrinsic.Control.If(V.Local.sOrdNumb.Trim,=,"")
+	V.Passed.GAB-CHK-1.Set("N")
+	V.Passed.GAB-CHK-2.Set("N")
+F.Intrinsic.Control.Else
+	F.Intrinsic.Control.If(V.Local.sFlag,=,1)
+		V.Passed.GAB-CHK-1.Set("Y")
+	F.Intrinsic.Control.Elseif(V.Local.sFlag,=,0)
+		V.Passed.GAB-CHK-1.Set("N")
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+		F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.SaveEntry.End
+
+Program.Sub.SetOnHoldViaApproved.Start
+F.Intrinsic.Control.Try
+	V.Local.sSQL.Declare
+	V.Local.sOrdNumb.Declare
+	V.Local.iCnt.Declare
+	V.Local.sWORet.Declare
+	V.Local.sWORetFinal.Declare
+	V.Local.iWOCounter.Declare
+	V.Local.sTempArray.Declare
+	
+	'Function.Intrinsic.Debug.InvokeDebugger
+	'Function.Intrinsic.Debug.Stop
+	
+	'BM: Means it was just unchecked and sales order field is not blank
+	F.Intrinsic.Control.If(V.Passed.GAB-CHK-1.Trim, <>, "Y", AND, V.Passed.000003, <>, "")
+		F.Intrinsic.String.LPad(V.Passed.000003, "0", 7, V.Local.sOrdNumb)
+		
+		'BM Use this to write/update on hold status (Using a recordset only updates top most record, use save to db instead)
+		F.Intrinsic.String.Build("SELECT * FROM GCG_6573_SO_LINE_APP WHERE ORDER_NO = '{0}'", V.Local.sOrdNumb, V.Local.sSql)
+		'F.ODBC.Connection!con.OpenLocalRecordsetRW("rstHold", V.Local.sSql)
+		F.Data.DataTable.CreateFromSQL("dtHoldCustom", "con", V.Local.sSQL)
+		'F.Intrinsic.Control.If(V.ODBC.con!rstHold.EOF,=,False)
+		F.Intrinsic.Control.If(V.DataTable.dtHoldCustom.RowCount, >, 0)
+			F.Data.DataTable.SetValue("dtHoldCustom", -1, "APPROVAL_FLAG", 0)
+			F.Data.DataTable.SetValue("dtHoldCustom", -1, "ON_HOLD_FLAG", 1)
+			'Only update here. When saved, will add any new lines to custom table 
+			F.Data.DataTable.SaveToDB("dtHoldCustom", "con", "GCG_6573_SO_LINE_APP", "ORDER_NO*!*ORDER_LINE", 2)
+'			F.ODBC.con!rstHold.Set!APPROVAL_FLAG("0")
+'			F.ODBC.con!rstHold.Set!ON_HOLD_FLAG("1")
+'			F.ODBC.con!rstHold.Update
+		F.Intrinsic.Control.EndIf
+	
+		'F.ODBC.con!rstHold.Close
+	
+		'BM: Find the corresponding Work orders from all sales order lines, and place those on hold too
+		F.Intrinsic.String.Build("Select JOB, SUFFIX, FLAG_HOLD from JOB_HEADER where JOB in (Select JOB from ORDER_TO_WO where ORDER_NO = '{0}')", V.Local.sOrdNumb, V.Local.sSQL)
+		'V.Local.sSQL.Set("select PART, PRODUCT_LINE from INVENTORY_MSTR where PART = '0025' or PART = '1321'")
+		'F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL, V.Local.sWORet)
+		F.Data.DataTable.CreateFromSQL("dtHoldCore", "con", V.Local.sSQL) 
+		F.Intrinsic.Control.For(V.Local.iCnt, 0, V.DataTable.dtHoldCore.RowCount--, 1)
+			F.Data.DataTable.SetValue("dtHoldCore", V.Local.iCnt, "FLAG_HOLD", "Y")
+		F.Intrinsic.Control.Next(V.Local.iCnt)
+		F.Data.DataTable.SaveToDB("dtHoldCore", "con", "JOB_HEADER", "JOB*!*SUFFIX", 2)
+		
+		V.Passed.GAB-CHK-2.Set("Y")
+	'BM: If set to approved, set on hold to False on the screen, and remove on hold flag from core tables and custom table
+	F.Intrinsic.Control.ElseIf(V.Passed.GAB-CHK-1.Trim, =, "Y", OR, V.Passed.GAB-CHK-2.Trim, <>, "Y")
+		F.Intrinsic.Control.If(V.Passed.000003, <>, "")
+			F.Intrinsic.String.LPad(V.Passed.000003, "0", 7, V.Local.sOrdNumb)
+		
+			'Use this to write/update on hold status 
+			'F.Intrinsic.String.Build("SELECT * FROM GCG_6573_SO_LINE_APP WHERE ORDER_NO = '{0}'", V.Local.sOrdNumb, V.Local.sSql)
+			F.Intrinsic.String.Build("SELECT * FROM GCG_6573_SO_LINE_APP WHERE ORDER_NO = '{0}'", V.Local.sOrdNumb, V.Local.sSql)
+			'F.ODBC.Connection!con.OpenLocalRecordsetRW("rstHold", V.Local.sSql)
+			F.Data.DataTable.CreateFromSQL("dtHoldCustom", "con", V.Local.sSQL)
+			'F.Intrinsic.Control.If(V.ODBC.con!rstHold.EOF,=,False)
+			F.Intrinsic.Control.If(V.DataTable.dtHoldCustom.RowCount, >, 0)
+				F.Data.DataTable.SetValue("dtHoldCustom", -1, "APPROVAL_FLAG", 1)
+				F.Data.DataTable.SetValue("dtHoldCustom", -1, "ON_HOLD_FLAG", 0)
+				'Only update here. When saved, will add any new lines to custom table 
+				F.Data.DataTable.SaveToDB("dtHoldCustom", "con", "GCG_6573_SO_LINE_APP", "ORDER_NO*!*ORDER_LINE", 2)
+'				F.ODBC.con!rstHold.Set!APPROVAL_FLAG("1")
+'				F.ODBC.con!rstHold.Set!ON_HOLD_FLAG("0")
+'				F.ODBC.con!rstHold.Update
+			F.Intrinsic.Control.EndIf
+		
+			'F.ODBC.con!rstHold.Close
+		
+			'BM: Find the corresponding Work orders from all sales order lines, and place those on hold too
+			F.Intrinsic.String.Build("Select JOB, SUFFIX, FLAG_HOLD from JOB_HEADER where JOB in (Select JOB from ORDER_TO_WO where ORDER_NO = '{0}')", V.Local.sOrdNumb, V.Local.sSQL)
+			'V.Local.sSQL.Set("select PART, PRODUCT_LINE from INVENTORY_MSTR where PART = '0025' or PART = '1321'")
+			'F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL, V.Local.sWORet)
+			F.Data.DataTable.CreateFromSQL("dtHoldCore", "con", V.Local.sSQL) 
+			F.Intrinsic.Control.For(V.Local.iCnt, 0, V.DataTable.dtHoldCore.RowCount--, 1)
+				F.Data.DataTable.SetValue("dtHoldCore", V.Local.iCnt, "FLAG_HOLD", "")
+			F.Intrinsic.Control.Next(V.Local.iCnt)
+			F.Data.DataTable.SaveToDB("dtHoldCore", "con", "JOB_HEADER", "JOB*!*SUFFIX", 2)
+		
+			V.Passed.GAB-CHK-2.Set("N")
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.SetOnHoldViaApproved.End
+
+Program.Sub.Chk2Toggle.Start
+F.Intrinsic.Control.Try
+	F.Intrinsic.Control.If(V.Passed.GAB-CHK-2.Trim, =, "Y")
+		V.Passed.GAB-CHK-1.Set("N")
+	F.Intrinsic.Control.Else
+		V.Passed.GAB-CHK-1.Set("Y")
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: GCG_6573_SOLnApproval.g2u{0}{0}Subroutine: {1}{0}Error Occurred {2} with description {3}",V.Ambient.NewLine,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.Chk2Toggle.End
+
+Program.Sub.Comments.Start
+${$0$}$Sales Order Line Approval$}$SISCO$}$11/22/2016 3:59:52 PM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This project was designed and coded by team SkyNet on November 22 2016
+${$5$}$2.0.0.0$}$2
+${$6$}$bmedina$}$20220315101556830$}$kOipCrsyLBVj2KoSwkcdK23ChxGVcBlEmNZ4Kgp407Y133a8VOSGq3g+CvCnlxJX4ieairVuZTo=
+Program.Sub.Comments.End
